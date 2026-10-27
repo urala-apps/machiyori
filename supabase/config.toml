@@ -1,0 +1,4 @@
+# supabase CLI 用の設定（本番のプロジェクト：machiyori / Tokyo）
+[functions.send-order]
+# 関数の中でログインとスタッフの権限を確かめるので、入口の JWT 確認はしない（CORS の事前確認を通すため）
+verify_jwt = false
