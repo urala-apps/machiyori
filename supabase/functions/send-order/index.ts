@@ -1,11 +1,14 @@
 // 発注書を送る：メールで取引先へ、または メールtoFAX のサービスへ（PDF を添付）
-// 呼べるのはログインしたスタッフだけ。送信は Resend の API を使う。
+// 呼べるのはログインしたスタッフだけ。送信は Gmail（SMTP・アプリ パスワード）を使う。
+// Supabase の Edge Function は 25・587 番ポートに出られないので、465 番（SSL）で送る。
 //
-// 必要な秘密の値（supabase secrets set で入れる。リポジトリには書かない）
-//   RESEND_API_KEY  Resend の API キー
-//   MAIL_FROM       送信元（例 "まちより 発注 <order@あなたのドメイン>"）。FAX サービスに登録したアドレスにする
+// 必要な秘密の値（Supabase の Edge Functions → Secrets に入れる。リポジトリには書かない）
+//   GMAIL_USER          送信に使う Gmail のアドレス。FAX サービスにはこのアドレスを送信元として登録する
+//   GMAIL_APP_PASSWORD  その Gmail のアプリ パスワード（16文字）
+//   MAIL_FROM_NAME      送信者の名前（なくてもよい。例 まちより 発注）
 import { createClient } from 'npm:@supabase/supabase-js@2.95.3'
-import { encodeBase64 } from 'jsr:@std/encoding@1/base64'
+import nodemailer from 'npm:nodemailer@7.0.13'
+import { Buffer } from 'node:buffer'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -28,9 +31,9 @@ Deno.serve(async req => {
 
   const url = Deno.env.get('SUPABASE_URL')!
   const admin = createClient(url, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const resendKey = Deno.env.get('RESEND_API_KEY')
-  const mailFrom = Deno.env.get('MAIL_FROM')
-  if (!resendKey || !mailFrom) return json({ error: 'メール送信の設定（RESEND_API_KEY・MAIL_FROM）がありません' }, 500)
+  const gmailUser = Deno.env.get('GMAIL_USER')
+  const gmailPass = Deno.env.get('GMAIL_APP_PASSWORD')?.replace(/\s/g, '')
+  if (!gmailUser || !gmailPass) return json({ error: 'メール送信の設定（GMAIL_USER・GMAIL_APP_PASSWORD）がありません' }, 500)
 
   // 呼んだ人を確かめる
   const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
@@ -63,7 +66,7 @@ Deno.serve(async req => {
 
   const file = await admin.storage.from('order-pdfs').download(order.pdf_path)
   if (file.error || !file.data) return json({ error: '発注書の PDF を読めませんでした' }, 500)
-  const pdf = encodeBase64(new Uint8Array(await file.data.arrayBuffer()))
+  const pdf = Buffer.from(await file.data.arrayBuffer())
 
   const lines = [...order.order_lines].sort((a, b) => a.line_no - b.line_no)
   const subject = via === 'email' ? `【発注書】${order.order_no} ${store.name}` : `発注書 ${order.order_no}`
@@ -92,18 +95,28 @@ Deno.serve(async req => {
       ].join('\n')
 
   const replyTo = settings?.reply_to || store.email || undefined
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      from: mailFrom, to: [to], reply_to: replyTo, subject, text,
-      attachments: [{ filename: `${order.order_no}.pdf`, content: pdf }],
-    }),
-  })
-  const detail = await res.text()
+  let ok = true
+  let detail = ''
+  try {
+    const transport = nodemailer.createTransport({
+      host: 'smtp.gmail.com', port: 465, secure: true, auth: { user: gmailUser, pass: gmailPass },
+    })
+    const info = await transport.sendMail({
+      from: { name: Deno.env.get('MAIL_FROM_NAME') || store.name, address: gmailUser },
+      to, replyTo, subject, text,
+      attachments: [{ filename: `${order.order_no}.pdf`, content: pdf, contentType: 'application/pdf' }],
+    })
+    detail = `${info.messageId ?? ''} ${info.response ?? ''}`.trim()
+  } catch (e) {
+    ok = false
+    detail = String(e instanceof Error ? e.message : e)
+  }
 
-  await admin.from('send_logs').insert({ order_id, via, to_addr: to, ok: res.ok, detail: detail.slice(0, 1000), sent_by: user.id })
-  if (!res.ok) return json({ error: `送信できませんでした（${res.status}）：${detail.slice(0, 300)}` }, 502)
+  await admin.from('send_logs').insert({ order_id, via, to_addr: to, ok, detail: detail.slice(0, 1000), sent_by: user.id })
+  if (!ok) {
+    const hint = /auth|credentials|535/i.test(detail) ? 'Gmail のアドレスかアプリ パスワードが違います。' : ''
+    return json({ error: `送信できませんでした。${hint}（${detail.slice(0, 200)}）` }, 502)
+  }
 
   await admin.from('orders').update({
     status: 'sent', sent_via: via, sent_to: to, sent_at: new Date().toISOString(), sent_by: user.id,

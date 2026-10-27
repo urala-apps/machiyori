@@ -15,7 +15,7 @@
 | 画面 | Vite + React（`src/`）。Vercel に置く |
 | データ・ログイン | Supabase（Postgres・Auth・Storage）。表と権限は `supabase/migrations/` |
 | 発注書 PDF | ブラウザで A4 の発注書を画像にして PDF にする（`src/lib/pdf.ts`） |
-| 送信 | Supabase Edge Function `send-order` が Resend でメールを送る。FAX は「メールtoFAX」のサービスの宛先へ PDF 付きメールを送る |
+| 送信 | Supabase Edge Function `send-order` が Gmail（SMTP・アプリ パスワード）でメールを送る。FAX は「メールtoFAX」のサービスの宛先へ PDF 付きメールを送る |
 
 画面は `anon` の権限では何も読めない。ログインして承認されたスタッフだけが読める（RLS）。
 
@@ -28,16 +28,17 @@
 3. Authentication → Sign In / Providers → Email を有効にする
 4. **最初に登録した人が管理者になる**。立ち上げたらすぐ代表が登録すること。2人目からは「承認待ち」になり、管理者が「スタッフ」画面で承認する
 
-### 2. メール送信（Resend）
+### 2. メール送信（Gmail）
 
-1. [Resend](https://resend.com) でアカウントを作り、送信に使うドメイン（例 `example.co.jp`）を登録して DNS を設定する
-2. API キーを作る
-3. 秘密の値を Supabase に入れて、関数を置く（秘密の値はリポジトリに書かない）
+1. 送信に使う Gmail を決める（発注専用のアカウントを作るのがおすすめ）
+2. その Gmail で 2 段階認証を ON にし、Google アカウントの「アプリ パスワード」を作る（16 文字）
+3. Supabase の Edge Functions → Secrets に入れる（秘密の値はリポジトリやチャットに書かない）
+   - `GMAIL_USER`：送信に使う Gmail のアドレス
+   - `GMAIL_APP_PASSWORD`：アプリ パスワード
+   - `MAIL_FROM_NAME`：送信者の名前（なくてもよい。空なら店名）
+4. 関数を置く：`supabase functions deploy send-order`
 
-   ```sh
-   supabase secrets set RESEND_API_KEY=re_xxx MAIL_FROM="まちより 発注 <order@example.co.jp>"
-   supabase functions deploy send-order
-   ```
+送ったメールは、その Gmail の「送信済み」に残る。取引先の返信と FAX サービスの送信結果も、その Gmail に届く（返信先を変えたいときは「設定」の返信先）。個人の Gmail は 1 日に送れる数に上限がある（約 500 通）。
 
 ### 3. 画面（Vercel）
 
@@ -61,7 +62,7 @@
 ### ① インターネットFAX（メールtoFAX）
 
 1. メールtoFAX のあるサービスを契約する
-2. サービスに **送信元のメールアドレス（`MAIL_FROM`）を登録**する。登録していないアドレスからのメールは FAX にならないサービスが多い
+2. サービスに **送信元のメールアドレス（`GMAIL_USER`）を登録**する。登録していないアドレスからのメールは FAX にならないサービスが多い
 3. 「設定」画面に、サービスが決めている宛先の形を入れる。`{fax}` のところに取引先の FAX 番号（数字だけ）が入る（例 `{fax}@サービスのドメイン`）
 4. 件名・本文の決まり（暗証番号を件名に入れる、本文を送り状にする、など）がサービスにあれば、`supabase/functions/send-order/index.ts` の FAX の件名・本文を合わせる
 
