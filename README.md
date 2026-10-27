@@ -1,1 +1,90 @@
-# machiyori
+# まちより 発注
+
+小売店の発注システム。商品を選ぶと取引先ごとに発注書（A4・PDF）を作り、メール・インターネットFAX で送るか、印刷して FAX 機（複合機の PC-FAX）で送る。
+
+- 店舗は複数（実店舗・移動型店舗）。移動型店舗は「納品先」に拠点・倉庫を書くと発注書に出る
+- スタッフは複数。登録 → 管理者が承認して使えるようになる。商品・取引先・店舗・設定を直せるのは管理者だけ
+- 商品・取引先は画面で登録するか、CSV で読み込む（Excel の Shift_JIS の CSV も読める）
+- 発注番号は `PO-店舗コード-日付-連番`（例 `PO-A-20261027-001`）。金額・消費税（8%・10% を分けて計算）はデータベース側で計算する
+- 作った発注書は履歴に残る。店や取引先の情報をあとで直しても、作った発注書は変わらない
+
+## しくみ
+
+| 部分 | 使うもの |
+|---|---|
+| 画面 | Vite + React（`src/`）。Vercel に置く |
+| データ・ログイン | Supabase（Postgres・Auth・Storage）。表と権限は `supabase/migrations/` |
+| 発注書 PDF | ブラウザで A4 の発注書を画像にして PDF にする（`src/lib/pdf.ts`） |
+| 送信 | Supabase Edge Function `send-order` が Resend でメールを送る。FAX は「メールtoFAX」のサービスの宛先へ PDF 付きメールを送る |
+
+画面は `anon` の権限では何も読めない。ログインして承認されたスタッフだけが読める（RLS）。
+
+## 立ち上げ
+
+### 1. Supabase
+
+1. Supabase で新しいプロジェクトを作る（リージョンは Tokyo）
+2. `supabase/migrations/0001_init.sql` を流す（`supabase db push`、または SQL Editor に貼る）
+3. Authentication → Sign In / Providers → Email を有効にする
+4. **最初に登録した人が管理者になる**。立ち上げたらすぐ代表が登録すること。2人目からは「承認待ち」になり、管理者が「スタッフ」画面で承認する
+
+### 2. メール送信（Resend）
+
+1. [Resend](https://resend.com) でアカウントを作り、送信に使うドメイン（例 `example.co.jp`）を登録して DNS を設定する
+2. API キーを作る
+3. 秘密の値を Supabase に入れて、関数を置く（秘密の値はリポジトリに書かない）
+
+   ```sh
+   supabase secrets set RESEND_API_KEY=re_xxx MAIL_FROM="まちより 発注 <order@example.co.jp>"
+   supabase functions deploy send-order
+   ```
+
+### 3. 画面（Vercel）
+
+1. Vercel でこのリポジトリを読み込む（Framework: Vite）
+2. 環境変数に `VITE_SUPABASE_URL` と `VITE_SUPABASE_ANON_KEY`（Supabase の Project URL と anon / publishable key）を入れる
+3. Supabase の Authentication → URL Configuration の Site URL に Vercel の URL を入れる
+
+手元で動かすとき：`.env.example` を `.env.local` にコピーして値を入れ、`npm install` → `npm run dev`。
+
+### 4. 最初のデータ
+
+管理者でログインして、次の順に入れる。
+
+1. 店舗（店舗コード・店名・種類・住所など。移動型店舗は「納品先」も）
+2. 取引先（CSV なら「取引先」画面の「ひな形」で列を確かめる）
+3. 商品（CSV の「取引先コード」で取引先と結びつく）
+4. 設定（インターネットFAX の宛先の形・消費税の端数）
+
+## FAX の送り方
+
+### ① インターネットFAX（メールtoFAX）
+
+1. メールtoFAX のあるサービスを契約する
+2. サービスに **送信元のメールアドレス（`MAIL_FROM`）を登録**する。登録していないアドレスからのメールは FAX にならないサービスが多い
+3. 「設定」画面に、サービスが決めている宛先の形を入れる。`{fax}` のところに取引先の FAX 番号（数字だけ）が入る（例 `{fax}@サービスのドメイン`）
+4. 件名・本文の決まり（暗証番号を件名に入れる、本文を送り状にする、など）がサービスにあれば、`supabase/functions/send-order/index.ts` の FAX の件名・本文を合わせる
+
+送信の結果（届いた・届かなかった）は、サービスから送信元のアドレスにメールで届く。システムの「送信済み」は「サービスが受け付けた」という意味。
+
+### ② 複合機の PC-FAX
+
+複合機の FAX ドライバーを入れたパソコンなら、発注書の「印刷」で、プリンターに FAX ドライバーを選んで送れる。送ったら「手で送った」を押すと、送信済みとして記録される。
+
+## CSV の列
+
+- 取引先：`取引先コード, 取引先名, 宛名, メール, FAX, 電話, 送り方, メモ, 使う`（送り方は「FAX」か「メール」）
+- 商品：`取引先コード, 取引先名, 品番, 品名, 規格, 単位, 単価, 税率, 使う`（単価は税抜、税率は 8 か 10、使うは 1 か 0）
+
+同じコード（取引先コード、または 取引先＋品番）の行は上書きする。
+
+## 開発
+
+```sh
+npm install
+npm run dev        # 手元で動かす
+npm run build      # 型チェックと本番ビルド
+```
+
+- 新しい表を作るマイグレーションには、必要な GRANT を同じファイルに書く（Supabase は新しい表に Data API の権限を自動で付けない）。`anon` には何も与えない
+- 金額の計算はデータベースの `create_orders` で行う。画面から送った金額は使わない
