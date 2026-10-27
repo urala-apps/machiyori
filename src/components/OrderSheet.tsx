@@ -4,17 +4,24 @@ import { jpDate, num, yen } from '../lib/format'
 
 const MIN_ROWS = 12
 
-/** A4 の発注書。画面のテーマに関係なく白い紙 */
-const OrderSheet = forwardRef<HTMLDivElement, { order: Order }>(function OrderSheet({ order: o }, ref) {
+/** A4 の発注書。画面のテーマに関係なく白い紙。fax を渡すと、上に FAX の送り状の欄を付ける（FAX 用に印刷するとき） */
+const OrderSheet = forwardRef<HTMLDivElement, { order: Order; fax?: string }>(function OrderSheet({ order: o, fax }, ref) {
   const s = o.supplier_snapshot
   const st = o.store_snapshot
   const lines = [...(o.order_lines ?? [])].sort((a, b) => a.line_no - b.line_no)
-  const blanks = Math.max(0, MIN_ROWS - lines.length)
+  const blanks = Math.max(0, MIN_ROWS - (fax ? 4 : 0) - lines.length)  // FAX の欄の分だけ空行を減らして A4 1枚に収める
   const hasReduced = o.tax_detail.some(t => t.rate === 8)
 
   return (
     <div className="sheet" ref={ref}>
       {o.status === 'cancelled' && <div className="sheet-void">取消</div>}
+      {fax && (
+        <div className="sheet-fax">
+          <div><span>FAX 送信先</span><b>{fax}</b>　{s.name} {s.attention || '御中'}</div>
+          <div><span>送信元</span>{st.name}{st.fax && `　FAX ${st.fax}`}{st.tel && `　TEL ${st.tel}`}</div>
+          <div><span>送信枚数</span>1枚（この用紙を含む）</div>
+        </div>
+      )}
       <div className="sheet-meta"><span>発注番号：{o.order_no}</span><span>発注日：{jpDate(o.order_date)}</span></div>
       <h1 className="sheet-title">発注書</h1>
       <div className="sheet-parties">

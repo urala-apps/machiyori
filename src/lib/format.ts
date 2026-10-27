@@ -23,7 +23,7 @@ export function faxAddress(gateway: string, fax: string) {
 
 export const methodLabel = { fax: 'FAX', email: 'メール' } as const
 export const statusLabel = { draft: '未送信', sent: '送信済み', cancelled: '取消' } as const
-export const viaLabel = { email: 'メール', fax: 'FAX', print: '印刷' } as const
+export const viaLabel = { email: 'メール', fax: 'FAX', print: '印刷・FAX機' } as const
 
 export function errorText(e: unknown) {
   if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message)

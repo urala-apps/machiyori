@@ -8,7 +8,8 @@ import OrderSheet from '../components/OrderSheet'
 
 export default function SheetsPage({ ids }: { ids: string[] }) {
   const [orders, setOrders] = useState<Order[] | null>(null)
-  const [printing, setPrinting] = useState<string[] | null>(null)
+  const [printing, setPrinting] = useState<{ ids: string[]; fax: boolean } | null>(null)
+  const afterPrint = useRef<(() => void) | null>(null)
 
   const load = useCallback(async () => {
     if (ids.length === 0) { setOrders([]); return }
@@ -18,14 +19,26 @@ export default function SheetsPage({ ids }: { ids: string[] }) {
 
   useEffect(() => { load() }, [load])
 
-  // 印刷：選んだ発注書だけを印刷する
+  // 印刷：選んだ発注書だけを印刷する。印刷画面を閉じたら afterPrint を呼ぶ
   useEffect(() => {
     if (!printing) return
-    const done = () => setPrinting(null)
+    let finished = false
+    const done = () => {
+      if (finished) return
+      finished = true
+      setPrinting(null)
+      afterPrint.current?.()
+      afterPrint.current = null
+    }
     window.addEventListener('afterprint', done, { once: true })
-    const t = window.setTimeout(() => window.print(), 50)
+    const t = window.setTimeout(() => { window.print(); done() }, 50)
     return () => { window.clearTimeout(t); window.removeEventListener('afterprint', done) }
   }, [printing])
+
+  const print = (ids: string[], fax = false, after?: () => void) => {
+    afterPrint.current = after ?? null
+    setPrinting({ ids, fax })
+  }
 
   if (!orders) return <p className="muted">読み込み中…</p>
   if (orders.length === 0) return <p className="muted">発注書が見つかりません。<a href="#/history">履歴</a>から開いてください。</p>
@@ -34,23 +47,25 @@ export default function SheetsPage({ ids }: { ids: string[] }) {
     <div>
       <div className="toolbar no-print">
         <button className="btn" onClick={() => go('order')}>← 発注画面へ</button>
-        {orders.length > 1 && <button className="btn" onClick={() => setPrinting(orders.map(o => o.id))}>すべて印刷</button>}
+        {orders.length > 1 && <button className="btn" onClick={() => print(orders.map(o => o.id))}>すべて印刷</button>}
         <span className="muted small">{orders.length}枚。作った発注書は履歴に残ります。</span>
       </div>
       {orders.map(o => (
-        <SheetBlock key={o.id} order={o} reload={load} printTarget={!printing || printing.includes(o.id)}
-          onPrint={() => setPrinting([o.id])} />
+        <SheetBlock key={o.id} order={o} reload={load} printTarget={!printing || printing.ids.includes(o.id)}
+          faxPrinting={!!printing?.fax && printing.ids.includes(o.id)}
+          onPrint={(fax, after) => print([o.id], fax, after)} />
       ))}
     </div>
   )
 }
 
-function SheetBlock({ order: o, reload, printTarget, onPrint }: {
-  order: Order; reload: () => Promise<void>; printTarget: boolean; onPrint: () => void
+function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
+  order: Order; reload: () => Promise<void>; printTarget: boolean; faxPrinting: boolean
+  onPrint: (fax?: boolean, after?: () => void) => void
 }) {
   const { suppliers, settings, toast } = useApp()
   const ref = useRef<HTMLDivElement>(null)
-  const [confirm, setConfirm] = useState<'email' | 'fax' | 'printed' | 'cancel' | null>(null)
+  const [confirm, setConfirm] = useState<'email' | 'fax' | 'printed' | 'faxPrinted' | 'cancel' | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
@@ -58,6 +73,8 @@ function SheetBlock({ order: o, reload, printTarget, onPrint }: {
   const sup = suppliers.find(s => s.id === o.supplier_id) ?? o.supplier_snapshot
   const mailTo = sup.email
   const faxTo = faxAddress(settings.fax_gateway, sup.fax)
+  // インターネットFAX が未設定のあいだは、「FAXで送る」で FAX 用の発注書を印刷する（FAX 機・複合機の PC-FAX で送る）
+  const faxByPrint = !settings.fax_gateway && !!sup.fax
   const fileName = `${o.order_no}.pdf`
 
   async function makePdf() {
@@ -107,6 +124,12 @@ function SheetBlock({ order: o, reload, printTarget, onPrint }: {
   const isPrimary = (m: 'email' | 'fax') => sup.send_method === m ? 'btn primary' : 'btn'
   const closed = o.status === 'cancelled'
 
+  function faxPrint() {
+    setError('')
+    setConfirm(null)
+    onPrint(true, () => setConfirm(o.status === 'draft' ? 'faxPrinted' : null))
+  }
+
   return (
     <section className={printTarget ? 'sheet-block print-target' : 'sheet-block'}>
       <div className="sheet-actions no-print">
@@ -117,35 +140,38 @@ function SheetBlock({ order: o, reload, printTarget, onPrint }: {
         </div>
         <div className="row">
           <button className="btn" disabled={!!busy} onClick={savePdf}>{busy === 'pdf' ? '作成中…' : 'PDFを保存'}</button>
-          <button className="btn" disabled={!!busy} onClick={onPrint}>印刷</button>
+          <button className="btn" disabled={!!busy} onClick={() => onPrint()}>印刷</button>
           <button className={isPrimary('email')} disabled={!!busy || closed || !mailTo} title={mailTo ? '' : '取引先にメールアドレスがありません'} onClick={() => setConfirm('email')}>メールで送る</button>
-          <button className={isPrimary('fax')} disabled={!!busy || closed || !faxTo} title={faxTo ? '' : 'FAX 番号かインターネットFAX の設定がありません'} onClick={() => setConfirm('fax')}>FAXで送る</button>
+          <button className={isPrimary('fax')} disabled={!!busy || closed || !(faxTo || faxByPrint)} title={sup.fax ? '' : '取引先に FAX 番号がありません'}
+            onClick={() => faxByPrint ? faxPrint() : setConfirm('fax')}>{faxByPrint ? 'FAXで送る（印刷）' : 'FAXで送る'}</button>
           {o.status === 'draft' && <button className="btn" disabled={!!busy} onClick={() => setConfirm('printed')}>手で送った</button>}
           {!closed && <button className="btn quiet" disabled={!!busy} onClick={() => setConfirm('cancel')}>取り消す</button>}
         </div>
-        {sup.fax && !settings.fax_gateway && <p className="muted small">インターネットFAX が未設定です。「印刷」で FAX 機・複合機から送り、「手で送った」を押してください（管理者が「設定」で登録できます）。</p>}
-        {sup.fax && <p className="muted small">複合機の PC-FAX で送るときは、「印刷」を押して、印刷画面のプリンターで複合機の FAX ドライバーを選び、宛先に {sup.fax} を入れます。送ったら「手で送った」を押してください。</p>}
+        {faxByPrint && !closed && <p className="muted small">「FAXで送る（印刷）」を押すと、FAX 用の発注書を印刷します。印刷画面のプリンターで複合機の FAX ドライバー（または FAX 機）を選び、宛先に <b>{sup.fax}</b> を入れて送ってください。</p>}
 
         {confirm && (
           <div className="confirm">
             {confirm === 'email' && <p><b>{mailTo}</b> に、発注書の PDF（{fileName}）を付けてメールで送ります。</p>}
             {confirm === 'fax' && <p><b>FAX {sup.fax}</b> に送ります（インターネットFAX の宛先 {faxTo}）。</p>}
             {confirm === 'printed' && <p>印刷して FAX 機などで送ったことを記録します。</p>}
+            {confirm === 'faxPrinted' && <p><b>FAX {sup.fax}</b> に送れましたか？ 送れたら「送れた」を押してください。送信済みとして記録します。</p>}
             {confirm === 'cancel' && <p>この発注書を「取消」にします。{o.status === 'sent' && '送った相手には、別に取消の連絡をしてください。'}</p>}
             {o.status === 'sent' && (confirm === 'email' || confirm === 'fax') && <p className="warn">この発注書は送信済みです。もう一度送ります。</p>}
             <div className="row">
               <button className="btn primary" disabled={!!busy} onClick={() =>
                 confirm === 'email' || confirm === 'fax' ? send(confirm)
-                  : rpc(confirm === 'printed' ? 'mark_order_printed' : 'cancel_order')}>
-                {busy ? '処理中…' : confirm === 'email' ? 'メールを送る' : confirm === 'fax' ? 'FAX を送る' : confirm === 'printed' ? '記録する' : '取り消す'}
+                  : rpc(confirm === 'cancel' ? 'cancel_order' : 'mark_order_printed')}>
+                {busy ? '処理中…' : confirm === 'email' ? 'メールを送る' : confirm === 'fax' ? 'FAX を送る'
+                  : confirm === 'printed' ? '記録する' : confirm === 'faxPrinted' ? '送れた' : '取り消す'}
               </button>
-              <button className="btn" disabled={!!busy} onClick={() => setConfirm(null)}>やめる</button>
+              {confirm === 'faxPrinted' && <button className="btn" disabled={!!busy} onClick={faxPrint}>もう一度印刷する</button>}
+              <button className="btn" disabled={!!busy} onClick={() => setConfirm(null)}>{confirm === 'faxPrinted' ? 'まだ送っていない' : 'やめる'}</button>
             </div>
           </div>
         )}
         {error && <p className="msg">{error}</p>}
       </div>
-      <div className="sheet-scroll"><OrderSheet ref={ref} order={o} /></div>
+      <div className="sheet-scroll"><OrderSheet ref={ref} order={o} fax={faxPrinting ? sup.fax : undefined} /></div>
     </section>
   )
 }
