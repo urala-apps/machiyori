@@ -24,7 +24,7 @@
 ### 1. Supabase
 
 1. Supabase で新しいプロジェクトを作る（リージョンは Tokyo）
-2. `supabase/migrations/0001_init.sql` を流す（`supabase db push`、または SQL Editor に貼る）
+2. `supabase/migrations/` のファイルを番号順に流す（`supabase db push`、または SQL Editor に貼る）
 3. Authentication → Sign In / Providers → Email を有効にする
 4. **最初に登録した人が管理者になる**。立ち上げたらすぐ代表が登録すること。2人目からは「承認待ち」になり、管理者が「スタッフ」画面で承認する
 
@@ -36,7 +36,7 @@
    - `GMAIL_USER`：送信に使う Gmail のアドレス
    - `GMAIL_APP_PASSWORD`：アプリ パスワード
    - `MAIL_FROM_NAME`：送信者の名前（なくてもよい。空なら店名）
-4. 関数を置く：`supabase functions deploy send-order`
+4. 関数を置く：`supabase functions deploy send-order`（`supabase/config.toml` で `verify_jwt = false`。関数の中でログインと権限を確かめる）
 
 送ったメールは、その Gmail の「送信済み」に残る。取引先の返信と FAX サービスの送信結果も、その Gmail に届く（返信先を変えたいときは「設定」の返信先）。個人の Gmail は 1 日に送れる数に上限がある（約 500 通）。
 

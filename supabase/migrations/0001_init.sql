@@ -317,6 +317,9 @@ grant update (name, role, default_store_id) on public.profiles to authenticated;
 grant select on public.orders, public.order_lines, public.send_logs to authenticated;
 grant update (pdf_path) on public.orders to authenticated;   -- 送信は Edge Function（service_role）が書く
 -- order_counters は関数の中だけで使う
+-- Edge Function（service_role）は発注・送信の記録を読み書きする
+grant select, insert, update, delete on public.stores, public.profiles, public.suppliers, public.items, public.settings,
+  public.order_counters, public.orders, public.order_lines, public.send_logs to service_role;
 
 revoke execute on function public.create_orders(uuid, date, text, jsonb),
   public.mark_order_printed(uuid), public.cancel_order(uuid), public.handle_new_user() from public, anon;
