@@ -78,10 +78,10 @@ grant execute on function public.item_order_stats(uuid) to authenticated;
 -- ---------- 発注書を作る（納品先つき） ----------
 -- p_delivery：{"type": "store" | "pickup" | "address" | "venue", "store_id": 外販が店舗に納品するときの店舗, "place_id": 指定の住所, "time": 時間}
 -- venue は外販の会場（その外販の店舗の住所）に納品
--- 前のかたち（p_delivery なし）で呼ばれたら、自分の店舗への納品にする
-drop function public.create_orders(uuid, date, text, jsonb);
+-- 前のかたち（引数4つ）の関数は消さずに残す（画面を入れ替えるまで前の画面が動くように）。
+-- p_delivery に既定値を付けないので、4つで呼べば前の関数、5つで呼べばこの関数になり、呼び分けが迷わない
 create function public.create_orders(
-  p_store_id uuid, p_due_date date, p_remarks text, p_lines jsonb, p_delivery jsonb default null
+  p_store_id uuid, p_due_date date, p_remarks text, p_lines jsonb, p_delivery jsonb
 ) returns uuid[]
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
