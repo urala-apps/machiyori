@@ -25,7 +25,17 @@ export function faxAddress(gateway: string, fax: string) {
 
 export const methodLabel = { fax: 'FAX', email: 'メール' } as const
 export const kindLabel = { fixed: '実店舗', mobile: '外販' } as const
-export const deliveryLabel = { store: '店舗に納品', pickup: '集荷', address: '指定の住所' } as const
+export const deliveryLabel = { venue: '外販の会場に納品', store: '店舗に納品', pickup: '集荷', address: '指定の住所' } as const
+
+const md = (s: string) => { const [, m, d] = s.split('-'); return `${+m}/${+d}` }
+/** 外販の期間（例 4/1〜4/10）。日付がなければ空 */
+export function periodText(s: { start_date: string | null; end_date: string | null }) {
+  if (!s.start_date && !s.end_date) return ''
+  if (s.start_date && (!s.end_date || s.end_date === s.start_date)) return md(s.start_date)
+  return `${s.start_date ? md(s.start_date) : ''}〜${s.end_date ? md(s.end_date) : ''}`
+}
+/** 今日（日本時間）を YYYY-MM-DD で */
+export const todayJst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10)
 export const statusLabel = { draft: '未送信', sent: '送信済み', cancelled: '取消' } as const
 export const viaLabel = { email: 'メール', fax: 'FAX', print: '印刷・FAX機' } as const
 

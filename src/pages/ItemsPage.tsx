@@ -99,15 +99,17 @@ export default function ItemsPage() {
         tax_rate: rate === '8' ? 8 : 10, active: !['0', 'いいえ', '×', 'false'].includes(r['使う'] ?? ''),
       })
     })
-    return { rows: out, errors }
+    const known = new Set(items.filter(i => i.code).map(i => `${i.supplier_id}|${i.code}`))
+    const existing = out.filter(r => r.code && known.has(`${r.supplier_id}|${r.code}`)).length
+    return { rows: out, errors, existing }
   }
 
-  async function importRows(rows: Record<string, unknown>[]) {
+  async function importRows(rows: Record<string, unknown>[], addOnly: boolean) {
     // 同じコードが CSV に2回あると取り込めないので、後ろの行を使う
     const withCode = [...new Map(rows.filter(r => r.code).map(r => [`${r.supplier_id}|${r.code}`, r])).values()]
     const noCode = rows.filter(r => !r.code)
     if (withCode.length) {
-      const { error } = await supabase.from('items').upsert(withCode, { onConflict: 'supplier_id,code' })
+      const { error } = await supabase.from('items').upsert(withCode, { onConflict: 'supplier_id,code', ignoreDuplicates: addOnly })
       if (error) throw error
     }
     if (noCode.length) {
@@ -131,7 +133,7 @@ export default function ItemsPage() {
         </select>
         <button className="btn" onClick={exportCsv}>CSV 書き出し</button>
         {isAdmin && <CsvImport headers={HEADERS} parse={parse} importRows={importRows} unit="品"
-          help="取引先は「取引先コード」で結びつけます。コードが空なら「取引先名」で探します。税率は 8 か 10。" />}
+          help="取引先は「取引先コード」で結びつけます。コードが空なら「取引先名」で探します。税率は 8 か 10。CSV にない商品は消えません。品番が空の行は、毎回新しく追加します。" />}
       </>}
     />
   )

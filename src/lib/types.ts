@@ -22,6 +22,8 @@ export interface Store {
   delivery_note: string
   active: boolean
   sort: number
+  start_date: string | null   // 外販の期間
+  end_date: string | null
 }
 
 export interface Supplier {
@@ -61,7 +63,7 @@ export interface DeliveryPlace {
   sort: number
 }
 
-export type DeliveryType = 'store' | 'pickup' | 'address'
+export type DeliveryType = 'store' | 'pickup' | 'address' | 'venue'
 
 export interface DeliverySnapshot {
   type: DeliveryType

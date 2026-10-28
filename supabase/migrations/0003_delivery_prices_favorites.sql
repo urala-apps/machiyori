@@ -1,7 +1,13 @@
 -- 納品先の選択・販売価格・お気に入り・発注の多い順・Google ドライブへの保存（代表 2026-10-28）
--- ・店舗の種類 mobile は画面では「外販」と呼ぶ（値はそのまま）
--- ・納品先は「店舗に納品」「集荷」「指定の住所」。実店舗の発注は自分の店舗への納品か集荷、外販は全部から選べる
+-- ・店舗の種類 mobile は画面では「外販」と呼ぶ（値はそのまま）。外販は1回ごとに店舗として登録する（名称・場所＝住所・期間）
+-- ・納品先は「店舗に納品」「集荷」「指定の住所」「外販の会場に納品」。実店舗の発注は自分の店舗への納品か集荷、外販は全部から選べる
 -- ・商品に販売価格（税込）を足す。発注書には仕入れ価格（price）を載せる
+
+-- ---------- 外販の期間 ----------
+alter table public.stores
+  add column start_date date,   -- 外販の期間（実店舗は空）。終わった外販は発注の画面に出さない
+  add column end_date date,
+  add constraint stores_period check (end_date is null or start_date is null or end_date >= start_date);
 
 -- ---------- 指定の住所（納品先） ----------
 create table public.delivery_places (
@@ -28,7 +34,7 @@ alter table public.items add column sale_price integer check (sale_price >= 0); 
 
 -- ---------- 発注の納品先 ----------
 alter table public.orders
-  add column delivery_type text not null default 'store' check (delivery_type in ('store', 'pickup', 'address')),
+  add column delivery_type text not null default 'store' check (delivery_type in ('store', 'pickup', 'address', 'venue')),
   add column delivery_time text not null default '',   -- 例 10:00、午前中（日付は due_date）
   add column delivery_snapshot jsonb;                  -- 作った時点の納品先 {type, name, zip, address, tel, note}
 
@@ -70,7 +76,8 @@ revoke execute on function public.item_order_stats(uuid) from public, anon;
 grant execute on function public.item_order_stats(uuid) to authenticated;
 
 -- ---------- 発注書を作る（納品先つき） ----------
--- p_delivery：{"type": "store" | "pickup" | "address", "store_id": 外販が店舗に納品するときの店舗, "place_id": 指定の住所, "time": 時間}
+-- p_delivery：{"type": "store" | "pickup" | "address" | "venue", "store_id": 外販が店舗に納品するときの店舗, "place_id": 指定の住所, "time": 時間}
+-- venue は外販の会場（その外販の店舗の住所）に納品
 -- 前のかたち（p_delivery なし）で呼ばれたら、自分の店舗への納品にする
 drop function public.create_orders(uuid, date, text, jsonb);
 create function public.create_orders(
@@ -107,8 +114,8 @@ begin
   end if;
 
   -- 納品先を決める
-  if v_type not in ('store', 'pickup', 'address') then raise exception '納品先の種類が正しくありません'; end if;
-  if v_store.kind = 'fixed' and v_type = 'address' then
+  if v_type not in ('store', 'pickup', 'address', 'venue') then raise exception '納品先の種類が正しくありません'; end if;
+  if v_store.kind = 'fixed' and v_type in ('address', 'venue') then
     raise exception '店舗からの発注は、店舗への納品か集荷を選んでください';
   end if;
   if v_type = 'store' then
@@ -121,6 +128,9 @@ begin
     end if;
     v_dest := jsonb_build_object('type', 'store', 'name', v_dest_store.name, 'zip', v_dest_store.zip,
       'address', v_dest_store.address, 'tel', v_dest_store.tel, 'note', '');
+  elsif v_type = 'venue' then
+    v_dest := jsonb_build_object('type', 'venue', 'name', v_store.name, 'zip', v_store.zip,
+      'address', v_store.address, 'tel', v_store.tel, 'note', '');
   elsif v_type = 'pickup' then
     v_dest := jsonb_build_object('type', 'pickup', 'name', '集荷', 'zip', '', 'address', '', 'tel', '', 'note', '');
   else

@@ -6,7 +6,7 @@ type Value = string | number | boolean | null
 export interface Field<T> {
   key: keyof T & string
   label: string
-  type?: 'text' | 'number' | 'email' | 'select' | 'checkbox'
+  type?: 'text' | 'number' | 'email' | 'date' | 'select' | 'checkbox'
   options?: { value: string; label: string }[]
   required?: boolean
   placeholder?: string
@@ -95,7 +95,9 @@ export default function MasterTable<T extends { id: string }>(p: Props<T>) {
                       </select>
                     : <input id={id} type={f.type ?? 'text'} value={v === null || v === undefined ? '' : String(v)}
                         required={f.required} placeholder={f.placeholder} min={f.type === 'number' ? 0 : undefined}
-                        onChange={e => set(f.key, f.type === 'number' ? (e.target.value === '' ? null : Number(e.target.value)) : e.target.value)} />}
+                        onChange={e => set(f.key, f.type === 'number' || f.type === 'date'
+                          ? (e.target.value === '' ? null : f.type === 'number' ? Number(e.target.value) : e.target.value)
+                          : e.target.value)} />}
                   {f.help && <span className="muted small">{f.help}</span>}
                 </div>
               )

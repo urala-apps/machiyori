@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { go, useApp } from '../lib/app'
 import type { DeliveryPlace, DeliveryType, Item } from '../lib/types'
-import { deliveryLabel, errorText, kindLabel, methodLabel, readLocal, writeLocal, yen } from '../lib/format'
+import { deliveryLabel, errorText, kindLabel, methodLabel, periodText, readLocal, todayJst, writeLocal, yen } from '../lib/format'
 
 const CART_KEY = 'machiyori.cart'
 const STORE_KEY = 'machiyori.store'
@@ -20,7 +20,9 @@ function loadSort(): { key: SortKey; desc: boolean } {
 
 export default function OrderPage() {
   const { stores, suppliers, profile } = useApp()
-  const activeStores = stores.filter(s => s.active)
+  // 終わった外販は出さない
+  const today = todayJst()
+  const activeStores = stores.filter(s => s.active && !(s.kind === 'mobile' && s.end_date && s.end_date < today))
   const [items, setItems] = useState<Item[]>([])
   const [places, setPlaces] = useState<DeliveryPlace[]>([])
   const [stats, setStats] = useState<Record<string, { times: number; qty: number }>>({})
@@ -68,11 +70,13 @@ export default function OrderPage() {
   const store = activeStores.find(s => s.id === storeId)
   const isOutside = store?.kind === 'mobile'
   const fixedStores = activeStores.filter(s => s.kind === 'fixed')
-  // 実店舗は「店舗に納品」か「集荷」だけ。外販は全部から選べる
-  const types: DeliveryType[] = isOutside ? ['store', 'pickup', 'address'] : ['store', 'pickup']
+  // 実店舗は「店舗に納品」か「集荷」だけ。外販は全部から選べて、はじめは会場に納品
+  const types: DeliveryType[] = isOutside ? ['venue', 'store', 'pickup', 'address'] : ['store', 'pickup']
   useEffect(() => {
-    if (!types.includes(delivery.type)) setDelivery(d => ({ ...d, type: 'store' }))
-  }, [isOutside]) // eslint-disable-line react-hooks/exhaustive-deps
+    setDelivery(d => ({ ...d, type: isOutside ? 'venue' : (types.includes(d.type) ? d.type : 'store') }))
+    // 外販を選んだら、納品希望日に期間の始めを入れる（入れてあれば変えない）
+    if (isOutside && store?.start_date) setDue(v => v || store.start_date!)
+  }, [storeId, isOutside]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const supName = useMemo(() => Object.fromEntries(suppliers.map(s => [s.id, s.name])), [suppliers])
   const supById = useMemo(() => Object.fromEntries(suppliers.map(s => [s.id, s])), [suppliers])
@@ -122,7 +126,7 @@ export default function OrderPage() {
     }
   }
 
-  const deliveryReady = delivery.type === 'pickup'
+  const deliveryReady = delivery.type === 'pickup' || delivery.type === 'venue'
     || (delivery.type === 'store' && (!isOutside || !!delivery.storeId))
     || (delivery.type === 'address' && !!delivery.placeId)
 
@@ -207,7 +211,12 @@ export default function OrderPage() {
         <div className="field">
           <label htmlFor="store">発注する店舗</label>
           <select id="store" value={storeId} onChange={e => { setStoreId(e.target.value); writeLocal(STORE_KEY, e.target.value) }}>
-            {activeStores.map(s => <option key={s.id} value={s.id}>{s.name}{s.kind === 'mobile' ? `（${kindLabel.mobile}）` : ''}</option>)}
+            <optgroup label={kindLabel.fixed}>
+              {fixedStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </optgroup>
+            {activeStores.some(s => s.kind === 'mobile') && <optgroup label={kindLabel.mobile}>
+              {activeStores.filter(s => s.kind === 'mobile').map(s => <option key={s.id} value={s.id}>{s.name}（{kindLabel.mobile}{periodText(s) && ` ${periodText(s)}`}）</option>)}
+            </optgroup>}
           </select>
           {activeStores.length === 0 && <span className="warn small">店舗がまだありません。管理者が「店舗」画面で登録してください。</span>}
         </div>
@@ -244,6 +253,7 @@ export default function OrderPage() {
                   {fixedStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select></div>
             : <p className="muted small">{store?.name}に納品してもらいます。</p>)}
+          {delivery.type === 'venue' && <p className="muted small">{store?.name}の会場{store?.address ? `（${store.address}）` : ''}に納品してもらいます。{!store?.address && <span className="warn">店舗の画面で会場の住所を入れてください。</span>}</p>}
           {delivery.type === 'pickup' && <p className="muted small">取引先へ引き取りに行きます。集荷の日時を入れてください。</p>}
           {delivery.type === 'address' && (
             <div className="field"><label htmlFor="dplace">納品先の住所</label>
