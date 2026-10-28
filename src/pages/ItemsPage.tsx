@@ -7,7 +7,18 @@ import { readCsv, writeCsv } from '../lib/csv'
 import MasterTable, { type Field } from '../components/MasterTable'
 import CsvImport from '../components/CsvImport'
 
-const HEADERS = ['取引先コード', '取引先名', '品番', '品名', '規格', '単位', '単価', '税率', '使う']
+const HEADERS = ['取引先コード', '取引先名', '品番', '品名', '規格', '単位', '仕入れ価格', '販売価格', '税率', '使う']
+
+/** 粗利率：販売価格（税込）から税を抜いた額に対する、仕入れ価格（税抜）との差 */
+function marginText(i: Pick<Item, 'price' | 'sale_price' | 'tax_rate'>) {
+  if (i.sale_price == null || i.sale_price <= 0) return ''
+  const net = i.sale_price / (1 + i.tax_rate / 100)
+  return `粗利 ${Math.round(((net - i.price) / net) * 100)}%`
+}
+const toYen = (v: string | undefined) => {
+  const t = (v ?? '').replace(/[,¥円\s]/g, '')
+  return t === '' ? null : Number(t)
+}
 
 export default function ItemsPage() {
   const { suppliers, isAdmin, toast } = useApp()
@@ -30,7 +41,9 @@ export default function ItemsPage() {
     { key: 'name', label: '品名', required: true },
     { key: 'spec', label: '規格', placeholder: '例 500ml×12' },
     { key: 'unit', label: '単位', placeholder: '例 ケース' },
-    { key: 'price', label: '単価（税抜・円）', type: 'number', required: true, numeric: true, render: r => yen(r.price) },
+    { key: 'price', label: '仕入れ価格（税抜・円）', type: 'number', required: true, numeric: true, help: '発注書にはこの価格が載ります', render: r => yen(r.price) },
+    { key: 'sale_price', label: '販売価格（税込・円）', type: 'number', numeric: true, help: '空でもかまいません',
+      render: r => r.sale_price == null ? <span className="muted">—</span> : <>{yen(r.sale_price)}<div className="sub">{marginText(r)}</div></> },
     { key: 'tax_rate', label: '税率', type: 'select', required: true,
       options: [{ value: '10', label: '10%' }, { value: '8', label: '8%（軽減）' }], render: r => `${r.tax_rate}%` },
     { key: 'active', label: '使う（発注画面に出す）', type: 'checkbox', render: r => r.active ? '' : <span className="chip">使わない</span> },
@@ -40,6 +53,7 @@ export default function ItemsPage() {
     const row = {
       supplier_id: v.supplier_id, code: v.code?.toString().trim() || null, name: v.name?.trim(),
       spec: v.spec ?? '', unit: v.unit || '個', price: Math.round(Number(v.price) || 0),
+      sale_price: v.sale_price == null || (v.sale_price as unknown) === '' ? null : Math.round(Number(v.sale_price)),
       tax_rate: Number(v.tax_rate) === 8 ? 8 : 10, active: v.active ?? true,
     }
     const { error } = id ? await supabase.from('items').update(row).eq('id', id) : await supabase.from('items').insert(row)
@@ -57,7 +71,7 @@ export default function ItemsPage() {
     const byId = Object.fromEntries(suppliers.map(s => [s.id, s]))
     writeCsv(items.map(i => ({
       取引先コード: byId[i.supplier_id]?.code ?? '', 取引先名: byId[i.supplier_id]?.name ?? '', 品番: i.code ?? '', 品名: i.name,
-      規格: i.spec, 単位: i.unit, 単価: i.price, 税率: i.tax_rate, 使う: i.active ? '1' : '0',
+      規格: i.spec, 単位: i.unit, 仕入れ価格: i.price, 販売価格: i.sale_price ?? '', 税率: i.tax_rate, 使う: i.active ? '1' : '0',
     })), HEADERS, '商品.csv')
   }
 
@@ -70,12 +84,19 @@ export default function ItemsPage() {
       const s = suppliers.find(x => (r['取引先コード'] && x.code === r['取引先コード']) || (!r['取引先コード'] && x.name === r['取引先名']))
       if (!s) { errors.push(`${line}行目：取引先「${r['取引先コード'] || r['取引先名'] || '（空）'}」が見つかりません`); return }
       if (!r['品名']) { errors.push(`${line}行目：品名が空です`); return }
-      const price = Number((r['単価'] ?? '').replace(/[,¥円\s]/g, ''))
-      if (!Number.isFinite(price) || price < 0) { errors.push(`${line}行目：単価「${r['単価']}」が数字ではありません`); return }
+      // 前のひな形の「単価」も仕入れ価格として読む
+      const priceText = r['仕入れ価格'] ?? r['単価']
+      const price = toYen(priceText)
+      if (price === null || !Number.isFinite(price) || price < 0) { errors.push(`${line}行目：仕入れ価格「${priceText ?? ''}」が数字ではありません`); return }
+      const sale = toYen(r['販売価格'])
+      if (sale !== null && (!Number.isFinite(sale) || sale < 0)) { errors.push(`${line}行目：販売価格「${r['販売価格']}」が数字ではありません`); return }
       const rate = (r['税率'] ?? '').replace(/[%％\s]/g, '')
       out.push({
         supplier_id: s.id, code: r['品番'] || null, name: r['品名'], spec: r['規格'] ?? '', unit: r['単位'] || '個',
-        price: Math.round(price), tax_rate: rate === '8' ? 8 : 10, active: !['0', 'いいえ', '×', 'false'].includes(r['使う'] ?? ''),
+        price: Math.round(price),
+        // 販売価格の列がない CSV（前のひな形）では、登録ずみの販売価格を消さない
+        ...('販売価格' in r ? { sale_price: sale === null ? null : Math.round(sale) } : {}),
+        tax_rate: rate === '8' ? 8 : 10, active: !['0', 'いいえ', '×', 'false'].includes(r['使う'] ?? ''),
       })
     })
     return { rows: out, errors }
@@ -99,7 +120,7 @@ export default function ItemsPage() {
   return (
     <MasterTable<Item>
       title="商品"
-      note={<>単価は税抜で入れます。品番が同じ商品は CSV の読み込みで上書きされます。使わなくなった商品は「使う」のチェックを外すと、発注画面に出なくなります（過去の発注書はそのまま）。</>}
+      note={<>仕入れ価格は税抜、販売価格は税込で入れます。発注書には仕入れ価格が載ります。品番が同じ商品は CSV の読み込みで上書きされます。使わなくなった商品は「使う」のチェックを外すと、発注画面に出なくなります（過去の発注書はそのまま）。</>}
       rows={rows} fields={fields} canEdit={isAdmin} addLabel="商品を追加"
       blank={{ supplier_id: sup || suppliers[0]?.id, unit: '個', price: 0, tax_rate: 10, active: true }}
       search={(r, k) => `${r.code ?? ''} ${r.name} ${r.spec} ${supName[r.supplier_id] ?? ''}`.toLowerCase().includes(k)}

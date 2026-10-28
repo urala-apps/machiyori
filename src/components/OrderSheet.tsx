@@ -1,6 +1,6 @@
 import { forwardRef } from 'react'
 import type { Order } from '../lib/types'
-import { jpDate, num, yen } from '../lib/format'
+import { deliveryLines, jpDate, num, yen } from '../lib/format'
 
 const MIN_ROWS = 12
 
@@ -11,6 +11,7 @@ const OrderSheet = forwardRef<HTMLDivElement, { order: Order; fax?: string }>(fu
   const lines = [...(o.order_lines ?? [])].sort((a, b) => a.line_no - b.line_no)
   const blanks = Math.max(0, MIN_ROWS - (fax ? 4 : 0) - lines.length)  // FAX の欄の分だけ空行を減らして A4 1枚に収める
   const hasReduced = o.tax_detail.some(t => t.rate === 8)
+  const dl = deliveryLines(o)
 
   return (
     <div className="sheet" ref={ref}>
@@ -39,8 +40,8 @@ const OrderSheet = forwardRef<HTMLDivElement, { order: Order; fax?: string }>(fu
       <p className="sheet-lead">下記のとおり発注いたします。</p>
       <div className="sheet-sum"><div>合計金額</div><div>{yen(o.total)}（税込）</div></div>
       <div className="sheet-info">
-        <div>納品希望日</div><div>{o.due_date ? jpDate(o.due_date) : 'ご相談'}</div>
-        <div>納品先</div><div>{st.delivery_note || `${st.name}（上記住所）`}</div>
+        <div>{dl.whenLabel}</div><div>{dl.when}</div>
+        <div>{dl.whereLabel}</div><div>{dl.where}{dl.note && <><br />{dl.note}</>}</div>
       </div>
       <table className="sheet-table">
         <thead><tr>

@@ -44,15 +44,39 @@ export interface Item {
   name: string
   spec: string
   unit: string
-  price: number
+  price: number              // 仕入れ価格（税抜）。発注書にはこれを載せる
+  sale_price: number | null  // 販売価格（税込）
   tax_rate: 8 | 10
   active: boolean
+}
+
+export interface DeliveryPlace {
+  id: string
+  name: string
+  zip: string
+  address: string
+  tel: string
+  note: string
+  active: boolean
+  sort: number
+}
+
+export type DeliveryType = 'store' | 'pickup' | 'address'
+
+export interface DeliverySnapshot {
+  type: DeliveryType
+  name: string
+  zip: string
+  address: string
+  tel: string
+  note: string
 }
 
 export interface Settings {
   fax_gateway: string
   tax_round: 'floor' | 'round' | 'ceil'
   reply_to: string
+  drive_folder_id: string
 }
 
 export interface OrderLine {
@@ -83,6 +107,13 @@ export interface Order {
   tax_detail: { rate: number; base: number; tax: number }[]
   status: 'draft' | 'sent' | 'cancelled'
   pdf_path: string | null
+  delivery_type: DeliveryType
+  delivery_time: string
+  delivery_snapshot: DeliverySnapshot | null
+  drive_url: string | null
+  drive_saved_at: string | null
+  created_by: string | null
+  orderer?: { name: string; email: string } | null   // 発注した人（profiles）
   sent_via: 'email' | 'fax' | 'print' | null
   sent_to: string | null
   sent_at: string | null

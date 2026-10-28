@@ -10,6 +10,7 @@ import HistoryPage from './pages/HistoryPage'
 import ItemsPage from './pages/ItemsPage'
 import SuppliersPage from './pages/SuppliersPage'
 import StoresPage from './pages/StoresPage'
+import PlacesPage from './pages/PlacesPage'
 import StaffPage from './pages/StaffPage'
 import SettingsPage from './pages/SettingsPage'
 
@@ -19,6 +20,7 @@ const NAV: { path: string; label: string; admin?: boolean }[] = [
   { path: 'items', label: '商品' },
   { path: 'suppliers', label: '取引先' },
   { path: 'stores', label: '店舗', admin: true },
+  { path: 'places', label: '納品先', admin: true },
   { path: 'staff', label: 'スタッフ', admin: true },
   { path: 'settings', label: '設定', admin: true },
 ]
@@ -28,7 +30,7 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [stores, setStores] = useState<Store[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [settings, setSettings] = useState<Settings>({ fax_gateway: '', tax_round: 'floor', reply_to: '' })
+  const [settings, setSettings] = useState<Settings>({ fax_gateway: '', tax_round: 'floor', reply_to: '', drive_folder_id: '' })
   const [toastMsg, setToastMsg] = useState('')
   const route = useRoute()
 
@@ -107,6 +109,7 @@ export default function App() {
           : page === 'items' ? <ItemsPage />
           : page === 'suppliers' ? <SuppliersPage />
           : page === 'stores' ? <StoresPage />
+          : page === 'places' ? <PlacesPage />
           : page === 'staff' ? <StaffPage />
           : page === 'settings' ? <SettingsPage />
           : <p className="muted">ページが見つかりません。</p>}
