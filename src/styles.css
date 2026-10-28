@@ -121,6 +121,9 @@ td.actions { white-space: nowrap; text-align: right; }
   box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
 }
 .sheet-void { position: absolute; top: 30mm; right: 20mm; border: 3px solid #b3261e; color: #b3261e; font-size: 28pt; padding: 0 6mm; transform: rotate(-12deg); }
+.sheet-fax { border: 2px solid #111; padding: 2mm 4mm; margin: -4mm 0 5mm; font-size: 10pt; display: grid; gap: 0.5mm; }
+.sheet-fax span { display: inline-block; width: 24mm; color: #444; font-size: 9pt; }
+.sheet-fax b { font-size: 13pt; letter-spacing: .05em; }
 .sheet-meta { display: flex; justify-content: flex-end; gap: 6mm; font-size: 9.5pt; margin-bottom: 4mm; }
 .sheet-title { text-align: center; font-size: 22pt; letter-spacing: .6em; padding-left: .6em; margin: 0 0 6mm; font-weight: 700; }
 .sheet-parties { display: flex; justify-content: space-between; gap: 8mm; margin-bottom: 6mm; }
