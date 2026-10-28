@@ -2,3 +2,7 @@
 [functions.send-order]
 # 関数の中でログインとスタッフの権限を確かめるので、入口の JWT 確認はしない（CORS の事前確認を通すため）
 verify_jwt = false
+
+[functions.save-to-drive]
+# send-order と同じく、関数の中でログインとスタッフの権限を確かめる
+verify_jwt = false

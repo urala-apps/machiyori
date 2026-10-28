@@ -62,15 +62,17 @@ export default function SuppliersPage() {
         active: !['0', 'いいえ', '×', 'false'].includes(r['使う'] ?? ''),
       }))
     })
-    return { rows, errors }
+    const known = new Set(suppliers.filter(s => s.code).map(s => s.code))
+    const existing = rows.filter(r => r.code && known.has(r.code as string)).length
+    return { rows, errors, existing }
   }
 
-  async function importRows(rows: Record<string, unknown>[]) {
+  async function importRows(rows: Record<string, unknown>[], addOnly: boolean) {
     // 同じコードが CSV に2回あると取り込めないので、後ろの行を使う
     const withCode = [...new Map(rows.filter(r => r.code).map(r => [String(r.code), r])).values()]
     const noCode = rows.filter(r => !r.code)
     if (withCode.length) {
-      const { error } = await supabase.from('suppliers').upsert(withCode, { onConflict: 'code' })
+      const { error } = await supabase.from('suppliers').upsert(withCode, { onConflict: 'code', ignoreDuplicates: addOnly })
       if (error) throw error
     }
     if (noCode.length) {

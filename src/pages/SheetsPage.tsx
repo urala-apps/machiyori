@@ -13,7 +13,8 @@ export default function SheetsPage({ ids }: { ids: string[] }) {
 
   const load = useCallback(async () => {
     if (ids.length === 0) { setOrders([]); return }
-    const { data } = await supabase.from('orders').select('*, order_lines(*)').in('id', ids).order('order_no')
+    const { data } = await supabase.from('orders')
+      .select('*, order_lines(*), orderer:profiles!orders_created_by_fkey(name, email)').in('id', ids).order('order_no')
     setOrders((data ?? []) as Order[])
   }, [ids.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -68,6 +69,7 @@ function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
   const [confirm, setConfirm] = useState<'email' | 'fax' | 'printed' | 'faxPrinted' | 'cancel' | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [remarks, setRemarks] = useState<string | null>(null)   // 備考を書いているあいだの文
 
   // 宛先は今の取引先の情報から取る（作ったあとに直したメール・FAX 番号も使えるように）
   const sup = suppliers.find(s => s.id === o.supplier_id) ?? o.supplier_snapshot
@@ -82,22 +84,56 @@ function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
     return sheetPdf(ref.current)
   }
 
+  // PDF を作って保管庫（Supabase）に置く。メール・FAX の送信とドライブへの保存はこれを使う
+  async function uploadPdf() {
+    const blob = await makePdf()
+    const path = `orders/${o.id}.pdf`
+    const up = await supabase.storage.from('order-pdfs').upload(path, blob, { upsert: true, contentType: 'application/pdf' })
+    if (up.error) throw up.error
+    const upd = await supabase.from('orders').update({ pdf_path: path }).eq('id', o.id)
+    if (upd.error) throw upd.error
+    return blob
+  }
+
+  // Google ドライブの指定フォルダに保存する（設定でフォルダを決めたときだけ）。失敗しても本来の操作は止めない
+  async function saveToDrive() {
+    if (!settings.drive_folder_id) return
+    const { error } = await supabase.functions.invoke('save-to-drive', { body: { order_id: o.id } })
+    if (error) {
+      const ctx = (error as { context?: Response }).context
+      const body = ctx ? await ctx.json().catch(() => null) : null
+      setError(`Google ドライブに保存できませんでした：${body?.error || errorText(error)}`)
+      return
+    }
+    await reload()
+  }
+
   async function savePdf() {
     setBusy('pdf'); setError('')
-    try { downloadBlob(await makePdf(), `発注書_${o.order_no}_${o.supplier_snapshot.name}.pdf`) }
-    catch (e) { setError(errorText(e)) }
+    try {
+      const blob = await uploadPdf()
+      downloadBlob(blob, `発注書_${o.order_no}_${o.supplier_snapshot.name}.pdf`)
+      void saveToDrive()
+    } catch (e) { setError(errorText(e)) }
     finally { setBusy('') }
+  }
+
+  // 印刷の前に PDF を作ってドライブに保存する（FAX の欄を付ける前の発注書を保存する）
+  async function printWithSave(fax: boolean) {
+    setBusy('print'); setError(''); setConfirm(null)
+    try {
+      if (settings.drive_folder_id) { await uploadPdf(); void saveToDrive() }
+    } catch (e) { setError(`Google ドライブ用の PDF を作れませんでした：${errorText(e)}`) }
+    finally { setBusy('') }
+    if (fax) onPrint(true, () => setConfirm(o.status === 'draft' ? 'faxPrinted' : null))
+    else onPrint()
   }
 
   async function send(via: 'email' | 'fax') {
     setBusy(via); setError('')
     try {
-      const blob = await makePdf()
-      const path = `orders/${o.id}.pdf`
-      const up = await supabase.storage.from('order-pdfs').upload(path, blob, { upsert: true, contentType: 'application/pdf' })
-      if (up.error) throw up.error
-      const upd = await supabase.from('orders').update({ pdf_path: path }).eq('id', o.id)
-      if (upd.error) throw upd.error
+      await uploadPdf()
+      void saveToDrive()
       const { data, error } = await supabase.functions.invoke('send-order', { body: { order_id: o.id, via } })
       if (error) {
         // 関数が返したエラー文を出す
@@ -112,6 +148,17 @@ function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
     finally { setBusy('') }
   }
 
+  async function saveRemarks() {
+    if (remarks === null) return
+    setBusy('remarks'); setError('')
+    const { error } = await supabase.from('orders').update({ remarks }).eq('id', o.id)
+    setBusy('')
+    if (error) { setError(errorText(error)); return }
+    setRemarks(null)
+    toast('備考を保存しました')
+    await reload()
+  }
+
   async function rpc(fn: 'mark_order_printed' | 'cancel_order') {
     setBusy(fn); setError('')
     const { error } = await supabase.rpc(fn, { p_order_id: o.id })
@@ -124,11 +171,7 @@ function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
   const isPrimary = (m: 'email' | 'fax') => sup.send_method === m ? 'btn primary' : 'btn'
   const closed = o.status === 'cancelled'
 
-  function faxPrint() {
-    setError('')
-    setConfirm(null)
-    onPrint(true, () => setConfirm(o.status === 'draft' ? 'faxPrinted' : null))
-  }
+  const faxPrint = () => printWithSave(true)
 
   return (
     <section className={printTarget ? 'sheet-block print-target' : 'sheet-block'}>
@@ -137,16 +180,30 @@ function SheetBlock({ order: o, reload, printTarget, faxPrinting, onPrint }: {
           <strong>{o.supplier_snapshot.name}</strong>
           <span className={`chip status-${o.status}`}>{statusLabel[o.status]}</span>
           {o.sent_via && <span className="muted small">{viaLabel[o.sent_via]} {jpDateTime(o.sent_at)}{o.sent_to && `（${o.sent_to}）`}</span>}
+          <span className="muted small">発注者：{o.orderer?.name || o.orderer?.email || '—'}</span>
+          {o.drive_url && <a className="chip" href={o.drive_url} target="_blank" rel="noreferrer">ドライブに保存済み {jpDateTime(o.drive_saved_at)}</a>}
         </div>
         <div className="row">
           <button className="btn" disabled={!!busy} onClick={savePdf}>{busy === 'pdf' ? '作成中…' : 'PDFを保存'}</button>
-          <button className="btn" disabled={!!busy} onClick={() => onPrint()}>印刷</button>
+          <button className="btn" disabled={!!busy} onClick={() => printWithSave(false)}>{busy === 'print' ? '準備中…' : '印刷'}</button>
           <button className={isPrimary('email')} disabled={!!busy || closed || !mailTo} title={mailTo ? '' : '取引先にメールアドレスがありません'} onClick={() => setConfirm('email')}>メールで送る</button>
           <button className={isPrimary('fax')} disabled={!!busy || closed || !(faxTo || faxByPrint)} title={sup.fax ? '' : '取引先に FAX 番号がありません'}
             onClick={() => faxByPrint ? faxPrint() : setConfirm('fax')}>{faxByPrint ? 'FAXで送る（印刷）' : 'FAXで送る'}</button>
           {o.status === 'draft' && <button className="btn" disabled={!!busy} onClick={() => setConfirm('printed')}>手で送った</button>}
+          {!closed && remarks === null && <button className="btn" disabled={!!busy} onClick={() => setRemarks(o.remarks)}>備考を書く</button>}
           {!closed && <button className="btn quiet" disabled={!!busy} onClick={() => setConfirm('cancel')}>取り消す</button>}
         </div>
+        {remarks !== null && (
+          <div className="confirm remarks-edit">
+            <label htmlFor={`remarks-${o.id}`}>この発注書の備考</label>
+            <textarea id={`remarks-${o.id}`} value={remarks} autoFocus onChange={e => setRemarks(e.target.value)} />
+            {o.status === 'sent' && <p className="warn small">この発注書は送信済みです。直した備考は相手に届いていません。直したあと、もう一度送ってください。</p>}
+            <div className="row">
+              <button className="btn primary" disabled={!!busy} onClick={saveRemarks}>{busy === 'remarks' ? '保存中…' : '備考を保存'}</button>
+              <button className="btn" disabled={!!busy} onClick={() => setRemarks(null)}>やめる</button>
+            </div>
+          </div>
+        )}
         {faxByPrint && !closed && <p className="muted small">「FAXで送る（印刷）」を押すと、FAX 用の発注書を印刷します。印刷画面のプリンターで複合機の FAX ドライバー（または FAX 機）を選び、宛先に <b>{sup.fax}</b> を入れて送ってください。</p>}
 
         {confirm && (

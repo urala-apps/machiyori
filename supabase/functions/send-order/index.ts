@@ -25,6 +25,22 @@ const jpDate = (s: string | null) => {
   return `${y}年${+m}月${+d}日`
 }
 
+// 納品先と日時（発注書の「納品希望日時」「納品先」と同じ書き方）
+function deliveryText(order: Record<string, any>, store: Record<string, any>) {
+  const d = order.delivery_snapshot
+  const pickup = order.delivery_type === 'pickup'
+  const when = [order.due_date ? jpDate(order.due_date) : '', order.delivery_time].filter(Boolean).join(' ') || 'ご相談'
+  let where: string
+  if (!d) where = store.delivery_note || store.name
+  else if (pickup) where = '集荷（貴社へ引き取りに伺います）'
+  else where = [d.name, [d.zip && `〒${d.zip}`, d.address].filter(Boolean).join(' '), d.tel && `TEL ${d.tel}`].filter(Boolean).join('　')
+  return [
+    `${pickup ? '集荷日時' : '納品希望日時'}：${when}`,
+    `${pickup ? '受け渡し' : '納品先'}：${where}`,
+    ...(d?.note ? [`　${d.note}`] : []),
+  ]
+}
+
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST で呼んでください' }, 405)
@@ -80,8 +96,7 @@ Deno.serve(async req => {
         '下記のとおり発注いたします。発注書（PDF）を添付しております。',
         '',
         `発注番号：${order.order_no}`,
-        `納品希望日：${jpDate(order.due_date)}`,
-        `納品先：${store.delivery_note || store.name}`,
+        ...deliveryText(order, store),
         '',
         ...lines.map(l => `${l.line_no}. ${l.code ?? ''} ${l.name} ${l.spec}　${l.qty}${l.unit}`),
         '',

@@ -13,7 +13,8 @@ export default function HistoryPage() {
   const [month, setMonth] = useState('')
 
   useEffect(() => {
-    let qb = supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(300)
+    let qb = supabase.from('orders').select('*, orderer:profiles!orders_created_by_fkey(name, email)')
+      .order('created_at', { ascending: false }).limit(300)
     if (store) qb = qb.eq('store_id', store)
     if (sup) qb = qb.eq('supplier_id', sup)
     if (status) qb = qb.eq('status', status)
@@ -47,21 +48,22 @@ export default function HistoryPage() {
       </div>
       <div className="tbl-wrap">
         <table className="list">
-          <thead><tr><th>発注番号</th><th>発注日</th><th>店舗</th><th>取引先</th><th className="num">合計(税込)</th><th>状態</th><th>送信</th></tr></thead>
+          <thead><tr><th>発注番号</th><th>発注日</th><th>店舗</th><th>発注者</th><th>取引先</th><th className="num">合計(税込)</th><th>状態</th><th>送信</th></tr></thead>
           <tbody>
             {orders?.map(o => (
               <tr key={o.id} className="clickable" onClick={() => go('sheets/' + o.id)}>
                 <td><a href={'#/sheets/' + o.id}>{o.order_no}</a></td>
                 <td>{jpDate(o.order_date)}</td>
                 <td>{storeName(o.store_id) || o.store_snapshot.name}</td>
+                <td>{o.orderer?.name || o.orderer?.email || '—'}</td>
                 <td>{o.supplier_snapshot.name}</td>
                 <td className="num">{yen(o.total)}</td>
                 <td><span className={`chip status-${o.status}`}>{statusLabel[o.status]}</span></td>
                 <td className="sub">{o.sent_via ? `${viaLabel[o.sent_via]} ${jpDateTime(o.sent_at)}` : ''}</td>
               </tr>
             ))}
-            {orders?.length === 0 && <tr><td colSpan={7} className="muted">該当する発注はありません。</td></tr>}
-            {!orders && <tr><td colSpan={7} className="muted">読み込み中…</td></tr>}
+            {orders?.length === 0 && <tr><td colSpan={8} className="muted">該当する発注はありません。</td></tr>}
+            {!orders && <tr><td colSpan={8} className="muted">読み込み中…</td></tr>}
           </tbody>
         </table>
       </div>
