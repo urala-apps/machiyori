@@ -7,6 +7,7 @@ import LoginPage from './pages/LoginPage'
 import OrderPage from './pages/OrderPage'
 import SheetsPage from './pages/SheetsPage'
 import HistoryPage from './pages/HistoryPage'
+import MonthlyPage from './pages/MonthlyPage'
 import ItemsPage from './pages/ItemsPage'
 import SuppliersPage from './pages/SuppliersPage'
 import StoresPage from './pages/StoresPage'
@@ -17,6 +18,7 @@ import SettingsPage from './pages/SettingsPage'
 const NAV: { path: string; label: string; admin?: boolean }[] = [
   { path: 'order', label: '発注' },
   { path: 'history', label: '履歴' },
+  { path: 'monthly', label: '月の一覧' },
   { path: 'items', label: '商品' },
   { path: 'suppliers', label: '取引先' },
   { path: 'stores', label: '店舗', admin: true },
@@ -30,7 +32,10 @@ export default function App() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [stores, setStores] = useState<Store[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [settings, setSettings] = useState<Settings>({ fax_gateway: '', tax_round: 'floor', reply_to: '', drive_folder_id: '' })
+  const [settings, setSettings] = useState<Settings>({
+    fax_gateway: '', tax_round: 'floor', reply_to: '', drive_folder_id: '',
+    company_name: '', company_zip: '', company_address: '', company_tel: '', company_fax: '', company_person: '', payment_terms: '',
+  })
   const [toastMsg, setToastMsg] = useState('')
   const route = useRoute()
 
@@ -75,8 +80,8 @@ export default function App() {
   if (!profile) return <main className="center muted">読み込み中…</main>
   if (profile.role === 'pending') {
     return <main className="center"><div className="panel narrow">
-      <h1>承認を待っています</h1>
-      <p>{profile.email} で登録しました。管理者が「スタッフ」画面で承認すると使えるようになります。</p>
+      <h1>このアカウントはいま使えません</h1>
+      <p>管理者に「スタッフ」画面で権限を「スタッフ」にしてもらうと使えるようになります。</p>
       <div className="row">
         <button className="btn" onClick={reload}>もう一度確かめる</button>
         <button className="btn" onClick={() => supabase.auth.signOut()}>ログアウト</button>
@@ -106,6 +111,7 @@ export default function App() {
           : page === 'order' ? <OrderPage />
           : page === 'sheets' ? <SheetsPage ids={(route[1] ?? '').split(',').filter(Boolean)} />
           : page === 'history' ? <HistoryPage />
+          : page === 'monthly' ? <MonthlyPage />
           : page === 'items' ? <ItemsPage />
           : page === 'suppliers' ? <SuppliersPage />
           : page === 'stores' ? <StoresPage />

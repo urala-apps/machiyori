@@ -9,6 +9,14 @@ export function jpDate(s: string | null | undefined) {
   return `${y}年${+m}月${+d}日`
 }
 
+/** 発注書の日付：令和8年1月29日 */
+export function eraDate(s: string | null | undefined) {
+  if (!s) return ''
+  const [y, m, d] = s.slice(0, 10).split('-').map(Number)
+  return new Intl.DateTimeFormat('ja-JP-u-ca-japanese', { era: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(y, m - 1, d)))
+}
+
 export function jpDateTime(s: string | null | undefined) {
   if (!s) return ''
   return new Date(s).toLocaleString('ja-JP', {
@@ -25,7 +33,10 @@ export function faxAddress(gateway: string, fax: string) {
 
 export const methodLabel = { fax: 'FAX', email: 'メール' } as const
 export const kindLabel = { fixed: '実店舗', mobile: '外販' } as const
+export const dealLabel = { '': '', buy: '買取', consign: '委託', both: '買取・委託' } as const
 export const deliveryLabel = { venue: '外販の会場に納品', store: '店舗に納品', pickup: '集荷', address: '指定の住所' } as const
+/** 発注書の「納品方法」 */
+export const deliveryMethodLabel = { venue: '会場に納品', store: '店舗納品', pickup: '集荷', address: '指定の住所に納品' } as const
 
 const md = (s: string) => { const [, m, d] = s.split('-'); return `${+m}/${+d}` }
 /** 外販の期間（例 4/1〜4/10）。日付がなければ空 */
@@ -36,7 +47,7 @@ export function periodText(s: { start_date: string | null; end_date: string | nu
 }
 /** 今日（日本時間）を YYYY-MM-DD で */
 export const todayJst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10)
-export const statusLabel = { draft: '未送信', sent: '送信済み', cancelled: '取消' } as const
+export const statusLabel = { draft: '下書き', sent: '送信済み', cancelled: '取消' } as const
 export const viaLabel = { email: 'メール', fax: 'FAX', print: '印刷・FAX機' } as const
 
 export function errorText(e: unknown) {
@@ -58,15 +69,16 @@ export function deliveryLines(o: Pick<Order, 'delivery_type' | 'delivery_time' |
   const when = [o.due_date ? jpDate(o.due_date) : '', o.delivery_time].filter(Boolean).join(' ') || 'ご相談'
   let where: string
   if (!d) {
-    const st = o.store_snapshot as { name: string; delivery_note?: string }
-    where = st.delivery_note || `${st.name}（上記住所）`
+    // 納品先を選ばなかった発注書は店舗へ（発注元は会社なので、店舗の住所も載せる）
+    const st = o.store_snapshot as { name: string; delivery_note?: string; zip?: string; address?: string }
+    where = st.delivery_note || [st.name, [st.zip && `〒${st.zip}`, st.address].filter(Boolean).join(' ')].filter(Boolean).join('　')
   } else if (pickup) {
     where = '集荷（貴社へ引き取りに伺います）'
   } else {
     where = [d.name, [d.zip && `〒${d.zip}`, d.address].filter(Boolean).join(' '), d.tel && `TEL ${d.tel}`].filter(Boolean).join('　')
   }
   return {
-    whenLabel: pickup ? '集荷日時' : '納品希望日時',
+    whenLabel: pickup ? '集荷日時' : '希望納期',
     when,
     whereLabel: pickup ? '受け渡し' : '納品先',
     where,

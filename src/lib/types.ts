@@ -20,6 +20,7 @@ export interface Store {
   email: string
   person: string
   delivery_note: string
+  delivery_method: 'store' | 'pickup'   // 納品のしかた。store：店舗納品（外販は会場に納品）、pickup：集荷
   active: boolean
   sort: number
   start_date: string | null   // 外販の期間
@@ -35,6 +36,8 @@ export interface Supplier {
   fax: string
   tel: string
   send_method: 'fax' | 'email'
+  deal_type: '' | 'buy' | 'consign' | 'both'   // 買取・委託
+  no_order: boolean         // 発注しない取引先（100番台の生産者さんなど）。発注画面に出さず、在庫 CSV で数量も入れない
   note: string
   active: boolean
 }
@@ -42,13 +45,16 @@ export interface Supplier {
 export interface Item {
   id: string
   supplier_id: string
-  code: string | null
+  code: string | null      // 品番（Airレジ）。Airレジの商品ID。在庫 CSV の「商品ID」と結びつける
   name: string
   spec: string
   unit: string
   price: number              // 仕入れ価格（税抜）。発注書にはこれを載せる
   sale_price: number | null  // 販売価格（税込）
   tax_rate: 8 | 10
+  barcode: string           // バーコード（Airレジ）。品番で見つからないとき、在庫 CSV の「バーコード」と結びつける
+  min_stock: number | null   // 発注ライン。手で発注するときの目安（在庫がこれを下回ると発注画面の行が赤くなる）
+  target_stock: number | null   // 設定在庫数。在庫 CSV から自動で入れる数量は「設定在庫数 − 在庫」。空なら自動で入れない
   active: boolean
 }
 
@@ -79,11 +85,20 @@ export interface Settings {
   tax_round: 'floor' | 'round' | 'ceil'
   reply_to: string
   drive_folder_id: string
+  // 発注書の発注元（会社）と支払条件
+  company_name: string
+  company_zip: string
+  company_address: string
+  company_tel: string
+  company_fax: string
+  company_person: string
+  payment_terms: string
 }
 
 export interface OrderLine {
   id: string
   line_no: number
+  item_id: string | null   // 商品を消したあとは空
   code: string | null
   name: string
   spec: string
@@ -119,6 +134,15 @@ export interface Order {
   sent_via: 'email' | 'fax' | 'print' | null
   sent_to: string | null
   sent_at: string | null
+  saved_at: string | null   // 履歴に残した日時。空は「作っただけ」
   created_at: string
   order_lines?: OrderLine[]
+}
+
+export interface InvoiceCheck {
+  supplier_id: string
+  month: string              // その月の1日（YYYY-MM-01）
+  invoice_amount: number | null
+  checked: boolean
+  note: string
 }
