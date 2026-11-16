@@ -20,7 +20,6 @@ export interface Store {
   email: string
   person: string
   delivery_note: string
-  delivery_method: 'store' | 'pickup'   // 納品のしかた。store：店舗納品（外販は会場に納品）、pickup：集荷
   active: boolean
   sort: number
   start_date: string | null   // 外販の期間
@@ -37,6 +36,7 @@ export interface Supplier {
   tel: string
   send_method: 'fax' | 'email'
   deal_type: '' | 'buy' | 'consign' | 'both'   // 買取・委託
+  delivery_method: 'delivery' | 'pickup'   // 納品：配達か集荷。発注書に載せる（集荷は目立つように）
   no_order: boolean         // 発注しない取引先（100番台の生産者さんなど）。発注画面に出さず、在庫 CSV で数量も入れない
   note: string
   active: boolean
@@ -54,6 +54,7 @@ export interface Item {
   tax_rate: 8 | 10
   barcode: string           // バーコード（Airレジ）。品番で見つからないとき、在庫 CSV の「バーコード」と結びつける
   min_stock: number | null   // 発注ライン。手で発注するときの目安（在庫がこれを下回ると発注画面の行が赤くなる）
+  note: string               // 備考。使う／使わないを切り替えたときの理由もここに残す
   target_stock: number | null   // 設定在庫数。在庫 CSV から自動で入れる数量は「設定在庫数 − 在庫」。空なら自動で入れない
   active: boolean
 }

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { go, useApp } from '../lib/app'
-import type { DeliveryPlace, DeliveryType, Item } from '../lib/types'
-import { deliveryLabel, errorText, kindLabel, methodLabel, periodText, readLocal, todayJst, writeLocal, yen } from '../lib/format'
+import type { DeliveryType, Item } from '../lib/types'
+import { errorText, kindLabel, methodLabel, periodText, readLocal, todayJst, writeLocal, yen } from '../lib/format'
 import { readCsv } from '../lib/csv'
 
 const CART_KEY = 'machiyori.cart'
+const AUTO_KEY = 'machiyori.autofilled'   // 在庫から自動で入れた数量（開き直してもオフで消せるように残す）
 const STORE_KEY = 'machiyori.store'
 const SORT_KEY = 'machiyori.sort'
 
@@ -90,7 +91,6 @@ export default function OrderPage() {
   const today = todayJst()
   const activeStores = stores.filter(s => s.active && !(s.kind === 'mobile' && s.end_date && s.end_date < today))
   const [items, setItems] = useState<Item[]>([])
-  const [places, setPlaces] = useState<DeliveryPlace[]>([])
   const [stats, setStats] = useState<Record<string, { times: number; qty: number }>>({})
   const [favs, setFavs] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -103,7 +103,10 @@ export default function OrderPage() {
   const [stock, setStock] = useState<StockData | null | undefined>(undefined)   // undefined は読み込み中、null はまだ一度も読み込んでいない
   const [staleOk, setStaleOk] = useState(false)   // 在庫が古い（ない）まま発注することを確かめたか
   // 在庫から自動で入れた数量（商品の id → 数）。切り替えで消すとき、手で直していないものだけ消す
-  const [autoFilled, setAutoFilled] = useState<Record<string, number> | null>(null)
+  const [autoFilled, setAutoFilled] = useState<Record<string, number> | null>(() => {
+    try { return JSON.parse(readLocal(AUTO_KEY) || 'null') } catch { return null }
+  })
+  const [clearAsk, setClearAsk] = useState(false)   // 「数量をすべてクリア」の確かめ
   const [stockMsg, setStockMsg] = useState('')
   const [sort, setSort] = useState(loadSort)
   const [cart, setCart] = useState<Record<string, number>>(() => restored?.cart ?? loadCart())
@@ -117,16 +120,15 @@ export default function OrderPage() {
   useEffect(() => {
     Promise.all([
       supabase.from('items').select('*').eq('active', true).order('code'),
-      supabase.from('delivery_places').select('*').eq('active', true).order('sort').order('name'),
       supabase.from('item_favorites').select('item_id').eq('user_id', profile.id),
-    ]).then(([it, pl, fv]) => {
+    ]).then(([it, fv]) => {
       setItems((it.data ?? []) as Item[])
-      setPlaces((pl.data ?? []) as DeliveryPlace[])
       setFavs(new Set((fv.data ?? []).map(f => f.item_id as string)))
       setLoading(false)
     })
   }, [profile.id])
   useEffect(() => { writeLocal(CART_KEY, JSON.stringify(cart)) }, [cart])
+  useEffect(() => { writeLocal(AUTO_KEY, JSON.stringify(autoFilled)) }, [autoFilled])
   useEffect(() => { writeLocal(SORT_KEY, JSON.stringify(sort)) }, [sort])
   useEffect(() => {
     if (!activeStores.some(s => s.id === storeId) && activeStores[0]) setStoreId(activeStores[0].id)
@@ -134,7 +136,7 @@ export default function OrderPage() {
   // 在庫は店舗ごと。店舗を選び直したら、その店舗の在庫を読む
   useEffect(() => {
     try { localStorage.removeItem('machiyori.stock') } catch { /* 前の版がブラウザに残した在庫は使わない */ }
-    setStock(undefined); setStockMsg(''); setStaleOk(false); setAutoFilled(null)
+    setStock(undefined); setStockMsg(''); setStaleOk(false)
     if (!storeId) return
     let live = true
     fetchStock(storeId).then(d => { if (live) setStock(d) }).catch(e => { if (live) setStockMsg(errorText(e)) })
@@ -151,13 +153,11 @@ export default function OrderPage() {
   const store = activeStores.find(s => s.id === storeId)
   const isOutside = store?.kind === 'mobile'
   const fixedStores = activeStores.filter(s => s.kind === 'fixed')
-  // 実店舗は「店舗に納品」か「集荷」だけ。外販は全部から選べて、はじめは会場に納品
-  const types: DeliveryType[] = isOutside ? ['venue', 'store', 'pickup', 'address'] : ['store', 'pickup']
   useEffect(() => {
     // 戻ってきた入力は、はじめの1回だけそのまま使う
     if (skipReset.current) { skipReset.current = false; return }
-    // はじめは店舗に登録した納品のしかた（集荷か、店舗納品。外販の店舗納品は会場に納品）
-    setDelivery(d => ({ ...d, type: store?.delivery_method === 'pickup' ? 'pickup' : isOutside ? 'venue' : 'store' }))
+    // 納品のしかたは取引先ごと（発注書に載る）。発注画面では選ばない：実店舗は店舗へ、外販は会場へ
+    setDelivery(d => ({ ...d, type: isOutside ? 'venue' : 'store' }))
     // 外販を選んだら、納品希望日に期間の始めを入れる（入れてあれば変えない）
     if (isOutside && store?.start_date) setDue(v => v || store.start_date!)
   }, [storeId, isOutside]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -183,7 +183,7 @@ export default function OrderPage() {
         return d ? d * dir : byCode(a, b)
       }
       if (sort.key === 'short') {
-        // 足りない数（発注ライン − 在庫数）で並べる。在庫か発注ラインがない商品は、いつもいちばん後ろ
+        // 足りない数（設定在庫数 − 在庫数）で並べる。在庫か設定在庫数がない商品は、いつもいちばん後ろ
         const sa = shortBy(a), sb = shortBy(b)
         if (sa === null || sb === null) return sa === sb ? byCode(a, b) : sa === null ? 1 : -1
         return (sa - sb) * dir || byCode(a, b)
@@ -196,13 +196,15 @@ export default function OrderPage() {
   const groups = useMemo(() => {
     const g: Record<string, { item: Item; qty: number }[]> = {}
     for (const i of items) if (cart[i.id] > 0) (g[i.supplier_id] ||= []).push({ item: i, qty: cart[i.id] })
-    return Object.entries(g).sort((a, b) => (supName[a[0]] ?? '').localeCompare(supName[b[0]] ?? '', 'ja'))
+    // 取引先のコード順
+    const code = (id: string) => supById[id]?.code ?? ''
+    return Object.entries(g).sort((a, b) => code(a[0]).localeCompare(code(b[0]), 'ja', { numeric: true }))
   }, [items, cart, supName])
 
-  // 足りない数（発注ライン − 在庫数）。在庫か発注ラインがなければ null
+  // 足りない数（設定在庫数 − 在庫数）。在庫か設定在庫数がなければ null
   function shortBy(i: Item) {
     const n = stock?.qty[i.id]
-    return i.min_stock == null || n === undefined ? null : i.min_stock - n
+    return i.target_stock == null || n === undefined ? null : i.target_stock - n
   }
   // 行の色：在庫が発注ラインを下回ったら赤、発注ラインの 120% を切ったら黄
   function stockLevel(i: Item): 'short' | 'near' | null {
@@ -259,7 +261,6 @@ export default function OrderPage() {
       const filled = fillFromStock(qty)   // 前に自動で入れた数量は、新しい在庫で入れ直す
       const short = items.filter(i => i.min_stock != null && qty[i.id] !== undefined && qty[i.id] < i.min_stock).length
       setStockMsg(`${Object.keys(qty).length}品の在庫を読み込んで保存しました${miss ? `（商品が見つからない行 ${miss}行）` : ''}。発注ラインを下回った商品は ${short}品です。設定在庫数より少ない ${filled}品に「設定在庫数 − 在庫」の数量を入れました。「数量を自動で入れる」で消すこともできます。`)
-      if (short) setOnlyShort(true)
       setSort({ key: 'short', desc: true })
     } catch (e) { setStockMsg(errorText(e)) }
   }
@@ -320,23 +321,21 @@ export default function OrderPage() {
     }
   }
 
-  const deliveryReady = delivery.type === 'pickup' || delivery.type === 'venue'
-    || (delivery.type === 'store' && (!isOutside || !!delivery.storeId))
-    || (delivery.type === 'address' && !!delivery.placeId)
 
   async function create() {
     setBusy(true); setError('')
     const lines = groups.flatMap(([, ls]) => ls.map(l => ({ item_id: l.item.id, qty: l.qty })))
     const { data, error } = await supabase.rpc('create_orders', {
-      p_store_id: storeId, p_due_date: due || null, p_remarks: remarks, p_lines: lines,
-      p_delivery: { type: delivery.type, store_id: delivery.storeId || null, place_id: delivery.placeId || null, time },
+      // 納品希望日・時間・備考は発注画面では入れない（備考は発注書の画面で1枚ずつ書ける）
+      p_store_id: storeId, p_due_date: null, p_remarks: '', p_lines: lines,
+      p_delivery: { type: isOutside ? 'venue' : 'store', store_id: null, place_id: null, time: '' },
     })
     setBusy(false)
     if (error) { setError(errorText(error)); return }
     const ids = data as string[]
     const form: OrderForm = { ids, storeId, cart, delivery, due, time, remarks }
     writeLocal(LAST_KEY, JSON.stringify(form))
-    setCart({}); setDue(''); setTime(''); setRemarks('')
+    setCart({}); setAutoFilled(null); setDue(''); setTime(''); setRemarks('')
     go('sheets/' + ids.join(','))
   }
 
@@ -403,6 +402,13 @@ export default function OrderPage() {
         {stock && <div className="toolbar">
           <label className="switch"><input type="checkbox" role="switch" checked={!!autoFilled} onChange={e => toggleAuto(e.target.checked)} />
             <span className="switch-track" aria-hidden="true" />設定在庫数に足りない数を自動で入れる</label>
+          {Object.keys(cart).length > 0 && (clearAsk
+            ? <span className="row">
+                <span className="small">入っている数量（{Object.keys(cart).length}品）をすべて消しますか？</span>
+                <button className="btn small danger" onClick={() => { setCart({}); setAutoFilled(null); setClearAsk(false); setStockMsg('') }}>すべて消す</button>
+                <button className="btn small" onClick={() => setClearAsk(false)}>やめる</button>
+              </span>
+            : <button className="btn small" onClick={() => setClearAsk(true)}>数量をすべてクリア</button>)}
           <label className="check"><input type="checkbox" checked={onlyShort} onChange={e => setOnlyShort(e.target.checked)} />在庫が発注ラインより少ないものだけ</label>
           <span className="small"><span className="swatch stock-short" />発注ラインを下回った <span className="swatch stock-near" />発注ラインの120%未満</span>
         </div>}
@@ -463,7 +469,7 @@ export default function OrderPage() {
           const sub = ls.reduce((a, l) => a + l.item.price * l.qty, 0)
           return (
             <div className="cart-group" key={sid}>
-              <h3><span>{s?.name}</span>{s && <span className="chip">{methodLabel[s.send_method]}</span>}</h3>
+              <h3><span>{s?.name}</span>{s && <span className="chip">{methodLabel[s.send_method]}</span>}{s?.delivery_method === 'pickup' && <span className="chip status-draft">集荷</span>}</h3>
               {ls.map(l => <div className="cart-line" key={l.item.id}><span>{l.item.name} × {l.qty}</span><span>{yen(l.item.price * l.qty)}</span></div>)}
               <div className="cart-line strong"><span>小計（税抜）</span><span>{yen(sub)}</span></div>
             </div>
@@ -471,44 +477,6 @@ export default function OrderPage() {
         })}
 
         <div className="cart-group">
-          <fieldset className="field">
-            <legend>納品のしかた</legend>
-            <div className="seg">
-              {types.map(t => (
-                <label key={t} className={delivery.type === t ? 'on' : undefined}>
-                  <input type="radio" name="dtype" value={t} checked={delivery.type === t} onChange={() => setDelivery(d => ({ ...d, type: t }))} />
-                  {deliveryLabel[t]}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          {delivery.type === 'store' && (isOutside
-            ? <div className="field"><label htmlFor="dstore">納品する店舗</label>
-                <select id="dstore" value={delivery.storeId} onChange={e => setDelivery(d => ({ ...d, storeId: e.target.value }))}>
-                  <option value="">選んでください</option>
-                  {fixedStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select></div>
-            : <p className="muted small">{store?.name}に納品してもらいます。</p>)}
-          {delivery.type === 'venue' && <p className="muted small">{store?.name}の会場{store?.address ? `（${store.address}）` : ''}に納品してもらいます。{!store?.address && <span className="warn">店舗の画面で会場の住所を入れてください。</span>}</p>}
-          {delivery.type === 'pickup' && <p className="muted small">取引先へ引き取りに行きます。集荷の日時を入れてください。</p>}
-          {delivery.type === 'address' && (
-            <div className="field"><label htmlFor="dplace">納品先の住所</label>
-              <select id="dplace" value={delivery.placeId} onChange={e => setDelivery(d => ({ ...d, placeId: e.target.value }))}>
-                <option value="">選んでください</option>
-                {places.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-              {places.length === 0 && <span className="warn small">住所がまだありません。管理者が「納品先」画面で登録してください。</span>}
-              {places.find(p => p.id === delivery.placeId) && <span className="muted small">{places.find(p => p.id === delivery.placeId)!.address}</span>}
-            </div>
-          )}
-          <div className="row2">
-            <div className="field"><label htmlFor="due">{delivery.type === 'pickup' ? '集荷日' : '納品希望日'}</label>
-              <input id="due" type="date" value={due} onChange={e => setDue(e.target.value)} /></div>
-            <div className="field"><label htmlFor="time">時間</label>
-              <input id="time" list="time-list" placeholder="例 10:00、午前中" value={time} onChange={e => setTime(e.target.value)} />
-              <datalist id="time-list"><option value="午前中" /><option value="午後" /><option value="9:00" /><option value="10:00" /><option value="13:00" /><option value="15:00" /></datalist></div>
-          </div>
-          <div className="field"><label htmlFor="remarks">備考（この発注の全部の発注書に入ります。発注書ごとにもあとで書けます）</label><textarea id="remarks" value={remarks} onChange={e => setRemarks(e.target.value)} /></div>
           {error && <p className="msg">{error}</p>}
           {groups.length > 0 && needStaleOk && (
             <div className="stock-confirm">
@@ -518,11 +486,10 @@ export default function OrderPage() {
                 {stockState === 'none' ? '在庫を読み込まないまま発注書を作る' : '古い在庫のまま発注書を作る'}</label>
             </div>
           )}
-          <button className="btn primary wide" disabled={busy || groups.length === 0 || !storeId || !deliveryReady || (needStaleOk && !staleOk)} onClick={create}>
+          <button className="btn primary wide" disabled={busy || groups.length === 0 || !storeId || (needStaleOk && !staleOk)} onClick={create}>
             {busy ? '作成中…' : `発注書を作成（${groups.length}枚）`}
           </button>
-          {groups.length > 0 && !deliveryReady && <p className="warn small">納品先を選んでください。</p>}
-          {groups.length > 0 && <button className="btn wide" onClick={() => setCart({})}>かごを空にする</button>}
+          {groups.length > 0 && <button className="btn wide" onClick={() => { setCart({}); setAutoFilled(null) }}>かごを空にする</button>}
         </div>
       </aside>
     </div>
