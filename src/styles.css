@@ -51,6 +51,12 @@ code { font-size: 13px; background: var(--chip); padding: 0 4px; border-radius: 
 .stock-banner.stale .stock-banner-label, .stock-banner.none .stock-banner-label { color: var(--danger); font-size: 16px; }
 .stock-confirm { border: 2px solid var(--danger); border-radius: 6px; padding: 8px 10px; margin: 8px 0; display: grid; gap: 4px; font-size: 14px; }
 .stock-confirm b { color: var(--danger); }
+.unknown-items { border: 1px solid var(--warn); border-radius: 6px; padding: 8px 12px; margin: 0 0 12px; font-size: 14px; }
+.unknown-items summary { cursor: pointer; color: var(--warn); }
+.unknown-items .tbl-wrap { max-height: 320px; overflow: auto; margin-top: 8px; }
+.cart-due { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 13px; }
+.cart-due label { color: var(--muted); white-space: nowrap; }
+.cart-due input { flex: 1; min-width: 0; }
 @media (max-width: 900px) { .grid-order { grid-template-columns: minmax(0, 1fr); } .cart { position: static; max-height: none; } }
 
 .toolbar, .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -118,6 +124,7 @@ table.list { width: 100%; border-collapse: collapse; font-variant-numeric: tabul
 table.list th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 400; border-bottom: 1px solid var(--line); padding: 6px 8px; white-space: nowrap; }
 table.list td { border-bottom: 1px solid var(--line); padding: 6px 8px; vertical-align: middle; }
 table.list tr.picked td { background: var(--picked); }
+table.list tr.inactive td { color: var(--muted); background: var(--chip); }
 /* 発注画面：在庫が発注ラインを下回ったら赤、120% 未満なら黄（選んだ行でも在庫の色を出す） */
 table.list tr.stock-short td { background: var(--row-short); }
 table.list tr.stock-near td { background: var(--row-near); }
